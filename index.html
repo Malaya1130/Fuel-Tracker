@@ -51,12 +51,12 @@ Target: <input type="number" id="targetInput" value="18" step="0.1"> km/L
 <tbody id="tbody"></tbody>
 </table>
 
-<button class="add" id="addBtn">Add</button>
-<button class="calc" id="calcBtn">Calc</button>
-<button class="savebtn" id="saveBtn">Save</button>
-<button class="export" id="exportBtn">Export</button>
-<button class="import" id="importBtn">Import Excel</button>
-<button class="report" id="reportBtn">PDF Report</button>
+<button class="add" onclick="addRow()">Add</button>
+<button class="calc" onclick="calculate()">Calc</button>
+<button class="savebtn" onclick="alert('Saved!')">Save</button>
+<button class="export" onclick="exportCSV()">Export Excel</button>
+<button class="import" onclick="fileInput.click()">Import Excel</button>
+<button class="report" onclick="generatePDF()">PDF Report</button>
 
 <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
 
@@ -66,13 +66,13 @@ Target: <input type="number" id="targetInput" value="18" step="0.1"> km/L
 <script>
 const { jsPDF } = window.jspdf;
 
-let chart, barChart;
+let chart;
 let currentYear="2025-2026";
-let targetMileage=18;
 
 const tbody=document.getElementById("tbody");
 const yearSelect=document.getElementById("yearSelect");
 const fileInput=document.getElementById("fileInput");
+const targetInput=document.getElementById("targetInput");
 
 // ---------- INIT ----------
 function initYear(){
@@ -86,7 +86,6 @@ yearSelect.add(opt);
 
 // ---------- STORAGE ----------
 function getKey(){ return "fuel_"+currentYear; }
-function getTargetKey(){ return "target_"+currentYear; }
 
 function getPreviousYear(y){
 let p=y.split("-");
@@ -111,10 +110,17 @@ r.insertCell(5).innerText="-";
 r.insertCell(6).innerText="-";
 
 let act=r.insertCell(7);
-act.innerHTML="<button onclick='move(this,-1)'>↑</button><button onclick='move(this,1)'>↓</button><button onclick='del(this)'>X</button>";
+act.innerHTML="<button onclick='del(this)'>X</button>";
 
 updateSN();
 saveSilent();
+}
+
+function del(b){
+b.parentNode.parentNode.remove();
+updateSN();
+saveSilent();
+calculate();
 }
 
 function updateSN(){
@@ -149,9 +155,7 @@ calculate();
 calculatePrevAvg();
 }
 
-// ---------- IMPORT FIXED ----------
-document.getElementById("importBtn").onclick=()=>fileInput.click();
-
+// ---------- IMPORT ----------
 fileInput.addEventListener("change",function(e){
 let file=e.target.files[0];
 if(!file) return;
@@ -168,7 +172,6 @@ localStorage.removeItem(getKey());
 
 json.forEach(row=>{
 let d=row["Dates"]||row["Date"];
-
 if(typeof d==="number"){
 d=new Date((d-25569)*86400*1000).toISOString().split("T")[0];
 }
@@ -183,8 +186,6 @@ a:row["Amount"]
 
 calculate();
 calculatePrevAvg();
-
-// 🔥 reset input (important fix)
 fileInput.value="";
 };
 
@@ -217,16 +218,31 @@ r.cells[6].innerText="-";
 prev=omr;
 });
 
+// Avg
 if(mc>0)
 document.getElementById("currentAvg").innerText="Current Avg: "+(ms/mc).toFixed(2);
+
+// 🔥 TARGET LINE FIX
+let targetVal=parseFloat(targetInput.value)||0;
 
 if(chart) chart.destroy();
 chart=new Chart(document.getElementById("chart"),{
 type:"line",
-data:{labels:labels,datasets:[
-{label:"Mileage",data:data},
-{label:"Target",data:labels.map(()=>targetMileage),borderDash:[5,5]}
-]}
+data:{
+labels:labels,
+datasets:[
+{
+label:"Mileage",
+data:data
+},
+{
+label:"Target",
+data:labels.map(()=>targetVal),
+borderDash:[6,6],
+pointRadius:0
+}
+]
+}
 });
 }
 
@@ -252,16 +268,28 @@ document.getElementById("prevAvg").innerText=
 avg? "Prev Avg: "+avg.toFixed(2):"Prev Avg: N/A";
 }
 
-// ---------- EVENTS ----------
-yearSelect.onchange=()=>{
-currentYear=yearSelect.value;
-load();
-};
+// ---------- EXPORT ----------
+function exportCSV(){
+let data=[];
+data.push(["S.No.","Dates","OMR","Quant. (L)","Amount","Dist","Milage"]);
 
-document.getElementById("addBtn").onclick=()=>addRow();
-document.getElementById("calcBtn").onclick=()=>calculate();
-document.getElementById("saveBtn").onclick=()=>alert("Saved!");
-document.getElementById("reportBtn").onclick=()=>generatePDF();
+[...tbody.rows].forEach((r,i)=>{
+data.push([
+i+1,
+r.cells[1].children[0].value,
+r.cells[2].children[0].value,
+r.cells[3].children[0].value,
+r.cells[4].children[0].value,
+r.cells[5].innerText,
+r.cells[6].innerText
+]);
+});
+
+let ws=XLSX.utils.aoa_to_sheet(data);
+let wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,ws,"Fuel Data");
+XLSX.writeFile(wb,"Fuel_Data_"+currentYear+".xlsx");
+}
 
 // ---------- PDF ----------
 function generatePDF(){
@@ -274,30 +302,12 @@ doc.text(prevAvg.innerText,10,28);
 let img=document.getElementById("chart").toDataURL();
 doc.addImage(img,'PNG',10,35,180,80);
 
-// bar chart
-let years=[],values=[];
-for(let y=2025;y<=2035;y++){
-let yr=`${y}-${y+1}`;
-let avg=getYearAvg(yr);
-if(avg){ years.push(yr); values.push(avg); }
-}
-
-let ctx=document.getElementById("barChart");
-if(barChart) barChart.destroy();
-
-barChart=new Chart(ctx,{
-type:"bar",
-data:{labels:years,datasets:[{label:"Year Avg",data:values}]}
-});
-
-setTimeout(()=>{
-let img2=ctx.toDataURL();
-doc.addPage();
-doc.text("Year-wise Avg Mileage",10,10);
-doc.addImage(img2,'PNG',10,20,180,80);
 doc.save("Fuel_Report_"+currentYear+".pdf");
-},300);
 }
+
+// ---------- EVENTS ----------
+yearSelect.onchange=()=>{ currentYear=yearSelect.value; load(); };
+targetInput.oninput=()=>calculate();
 
 // ---------- START ----------
 initYear();
