@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fuel Mileage Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 10px; background: #f4f6f9; font-size: 13px; }
+    .header { display: flex; justify-content: space-between; align-items: center; }
+    h2 { font-size: 18px; margin: 5px 0; }
+    .avg-box { background: #007bff; color: white; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    th, td { border: 1px solid #ddd; padding: 5px; text-align: center; }
+    th { background: #007bff; color: white; font-size: 12px; }
+    input { width: 100%; padding: 3px; font-size: 12px; }
+    button { margin: 5px 2px; padding: 4px 6px; border: none; cursor: pointer; border-radius: 3px; color: white; font-size: 11px; }
+    .add { background: #28a745; }
+    .calc { background: #007bff; }
+    .export { background: #17a2b8; }
+    .delete-btn { background: red; }
+    .move-btn { background: #6c757d; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h2>Fuel Mileage Tracker</h2>
+  <div class="avg-box" id="avgMileage">Avg. Milage: 0 km/L</div>
+</div>
+
+<table id="fuelTable">
+  <thead>
+    <tr>
+      <th>S.No.</th>
+      <th>Dates</th>
+      <th>OMR</th>
+      <th>Quant. (L)</th>
+      <th>Amount (₹)</th>
+      <th>Dist. (km)</th>
+      <th>Milage (km/L)</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<button class="add" onclick="addRow()">Add</button>
+<button class="calc" onclick="calculate()">Calc</button>
+<button class="export" onclick="exportCSV()">Export Excel</button>
+
+<h3 id="average"></h3>
+
+<script>
+const STORAGE_KEY = "fuelTrackerData_v5";
+
+function updateSerialNumbers() {
+  const rows = document.querySelectorAll("#fuelTable tbody tr");
+  rows.forEach((row, index) => {
+    row.cells[0].innerText = index + 1;
+  });
+}
+
+function saveData() {
+  const rows = document.querySelectorAll("#fuelTable tbody tr");
+  let data = [];
+
+  rows.forEach(row => {
+    data.push({
+      date: row.cells[1].children[0].value,
+      omr: row.cells[2].children[0].value,
+      fuel: row.cells[3].children[0].value,
+      amount: row.cells[4].children[0].value
+    });
+  });
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function loadData() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return;
+
+  const data = JSON.parse(saved);
+  data.forEach(d => addRow(d));
+  calculate();
+}
+
+function addRow(data = {}) {
+  const table = document.querySelector("#fuelTable tbody");
+  const row = table.insertRow();
+
+  row.insertCell(0).innerText = "";
+
+  const fields = ["date", "omr", "fuel", "amount"];
+
+  fields.forEach((field, i) => {
+    let cell = row.insertCell(i + 1);
+    let input = document.createElement("input");
+    input.type = (i === 0) ? "date" : "number";
+    input.value = data[field] || "";
+    input.oninput = () => { saveData(); calculate(); };
+    cell.appendChild(input);
+  });
+
+  row.insertCell(5).innerText = "-";
+  row.insertCell(6).innerText = "-";
+
+  let actionCell = row.insertCell(7);
+
+  let upBtn = document.createElement("button");
+  upBtn.innerText = "↑";
+  upBtn.className = "move-btn";
+  upBtn.onclick = () => moveRow(row, -1);
+  actionCell.appendChild(upBtn);
+
+  let downBtn = document.createElement("button");
+  downBtn.innerText = "↓";
+  downBtn.className = "move-btn";
+  downBtn.onclick = () => moveRow(row, 1);
+  actionCell.appendChild(downBtn);
+
+  let delBtn = document.createElement("button");
+  delBtn.innerText = "X";
+  delBtn.className = "delete-btn";
+  delBtn.onclick = () => { row.remove(); updateSerialNumbers(); saveData(); calculate(); };
+  actionCell.appendChild(delBtn);
+
+  updateSerialNumbers();
+  saveData();
+}
+
+function moveRow(row, direction) {
+  const tbody = row.parentNode;
+  const index = Array.from(tbody.children).indexOf(row);
+
+  if (direction === -1 && index > 0) {
+    tbody.insertBefore(row, tbody.children[index - 1]);
+  } else if (direction === 1 && index < tbody.children.length - 1) {
+    tbody.insertBefore(tbody.children[index + 1], row);
+  }
+
+  updateSerialNumbers();
+  saveData();
+  calculate();
+}
+
+function calculate() {
+  const rows = document.querySelectorAll("#fuelTable tbody tr");
+
+  let prevOMR = null;
+  let totalDistance = 0;
+  let totalFuel = 0;
+
+  let mileageSum = 0;
+  let mileageCount = 0;
+
+  rows.forEach((row) => {
+    let omr = parseFloat(row.cells[2].children[0].value);
+    let fuel = parseFloat(row.cells[3].children[0].value);
+
+    if (!isNaN(omr) && prevOMR !== null) {
+      let distance = omr - prevOMR;
+      row.cells[5].innerText = distance;
+
+      if (!isNaN(fuel) && fuel > 0) {
+        let mileage = distance / fuel;
+        row.cells[6].innerText = mileage;
+
+        totalDistance += distance;
+        totalFuel += fuel;
+
+        mileageSum += mileage;
+        mileageCount++;
+      }
+    } else {
+      row.cells[5].innerText = "-";
+      row.cells[6].innerText = "-";
+    }
+
+    prevOMR = omr;
+  });
+
+  if (totalFuel > 0) {
+    let avg = totalDistance / totalFuel;
+    document.getElementById("average").innerText = "Avg (Total): " + avg + " km/L";
+  } else {
+    document.getElementById("average").innerText = "";
+  }
+
+  if (mileageCount > 0) {
+    let avgMileage = mileageSum / mileageCount;
+    document.getElementById("avgMileage").innerText = "Avg. Milage: " + avgMileage + " km/L";
+  } else {
+    document.getElementById("avgMileage").innerText = "Avg. Milage: 0 km/L";
+  }
+}
+
+function exportCSV() {
+  let csv = "S.No.,Date,OMR,Fuel(L),Amount,Distance,Mileage\n";
+  const rows = document.querySelectorAll("#fuelTable tbody tr");
+
+  rows.forEach((row, i) => {
+    const date = row.cells[1].children[0].value;
+    const omr = row.cells[2].children[0].value;
+    const fuel = row.cells[3].children[0].value;
+    const amount = row.cells[4].children[0].value;
+    const dist = row.cells[5].innerText;
+    const mil = row.cells[6].innerText;
+
+    csv += `${i+1},${date},${omr},${fuel},${amount},${dist},${mil}\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'fuel_data.csv';
+  a.click();
+}
+
+loadData();
+
+if (document.querySelectorAll("#fuelTable tbody tr").length === 0) {
+  addRow();
+}
+</script>
+
+</body>
+</html>
