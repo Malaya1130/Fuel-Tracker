@@ -25,6 +25,10 @@ button { margin:5px; padding:6px; border:none; color:white; border-radius:4px; c
 .add{background:#28a745;} .calc{background:#007bff;}
 .export{background:#17a2b8;} .import{background:#fd7e14;}
 .report{background:#6f42c1;} .savebtn{background:#20c997;}
+
+.gold { background:#ffd700; }
+.silver { background:#c0c0c0; }
+.bronze { background:#cd7f32; }
 </style>
 </head>
 <body>
@@ -66,7 +70,7 @@ Target: <input type="number" id="targetInput" value="18" step="0.1"> km/L
 <script>
 const { jsPDF } = window.jspdf;
 
-let chart;
+let chart, barChart;
 let currentYear="2025-2026";
 
 const tbody=document.getElementById("tbody");
@@ -90,6 +94,22 @@ function getKey(){ return "fuel_"+currentYear; }
 function getPreviousYear(y){
 let p=y.split("-");
 return (parseInt(p[0])-1)+"-"+p[0];
+}
+
+// ---------- YEAR AVG ----------
+function getYearAvg(year){
+let data=JSON.parse(localStorage.getItem("fuel_"+year)||"[]");
+let prev=null,ms=0,mc=0;
+
+data.forEach(r=>{
+let omr=parseFloat(r.o);
+let fuel=parseFloat(r.f);
+if(prev!=null && fuel>0){
+ms+=(omr-prev)/fuel; mc++;
+}
+prev=omr;
+});
+return mc?ms/mc:0;
 }
 
 // ---------- ROW ----------
@@ -218,11 +238,9 @@ r.cells[6].innerText="-";
 prev=omr;
 });
 
-// Avg
 if(mc>0)
-document.getElementById("currentAvg").innerText="Current Avg: "+(ms/mc).toFixed(2);
+currentAvg.innerText="Current Avg: "+(ms/mc).toFixed(2);
 
-// 🔥 TARGET LINE FIX
 let targetVal=parseFloat(targetInput.value)||0;
 
 if(chart) chart.destroy();
@@ -231,41 +249,38 @@ type:"line",
 data:{
 labels:labels,
 datasets:[
-{
-label:"Mileage",
-data:data
-},
-{
-label:"Target",
-data:labels.map(()=>targetVal),
-borderDash:[6,6],
-pointRadius:0
-}
+{label:"Mileage",data:data},
+{label:"Target",data:labels.map(()=>targetVal),borderDash:[6,6],pointRadius:0}
 ]
 }
 });
+
+highlightTopMileage();
+}
+
+// ---------- TOP 3 ----------
+function highlightTopMileage(){
+let rows=[...tbody.rows];
+let data=rows.map((r,i)=>{
+let val=parseFloat(r.cells[6].innerText);
+return (!isNaN(val))?{i,val}:null;
+}).filter(x=>x);
+
+data.sort((a,b)=>b.val-a.val);
+
+rows.forEach(r=>{
+r.cells[6].classList.remove("gold","silver","bronze");
+});
+
+if(data[0]) rows[data[0].i].cells[6].classList.add("gold");
+if(data[1]) rows[data[1].i].cells[6].classList.add("silver");
+if(data[2]) rows[data[2].i].cells[6].classList.add("bronze");
 }
 
 // ---------- PREVIOUS AVG ----------
-function getYearAvg(year){
-let data=JSON.parse(localStorage.getItem("fuel_"+year)||"[]");
-let prev=null,ms=0,mc=0;
-
-data.forEach(r=>{
-let omr=parseFloat(r.o);
-let fuel=parseFloat(r.f);
-if(prev!=null && fuel>0){
-ms+=(omr-prev)/fuel; mc++;
-}
-prev=omr;
-});
-return mc?ms/mc:0;
-}
-
 function calculatePrevAvg(){
 let avg=getYearAvg(getPreviousYear(currentYear));
-document.getElementById("prevAvg").innerText=
-avg? "Prev Avg: "+avg.toFixed(2):"Prev Avg: N/A";
+prevAvg.innerText=avg? "Prev Avg: "+avg.toFixed(2):"Prev Avg: N/A";
 }
 
 // ---------- EXPORT ----------
@@ -291,7 +306,7 @@ XLSX.utils.book_append_sheet(wb,ws,"Fuel Data");
 XLSX.writeFile(wb,"Fuel_Data_"+currentYear+".xlsx");
 }
 
-// ---------- PDF ----------
+// ---------- PDF (FIXED BAR GRAPH) ----------
 function generatePDF(){
 let doc=new jsPDF();
 
@@ -299,10 +314,36 @@ doc.text("Fuel Report "+currentYear,10,10);
 doc.text(currentAvg.innerText,10,20);
 doc.text(prevAvg.innerText,10,28);
 
+// line graph
 let img=document.getElementById("chart").toDataURL();
 doc.addImage(img,'PNG',10,35,180,80);
 
+// bar graph
+let years=[],values=[];
+for(let y=2025;y<=2035;y++){
+let yr=`${y}-${y+1}`;
+let avg=getYearAvg(yr);
+if(avg>0){
+years.push(yr);
+values.push(avg);
+}
+}
+
+let ctx=document.getElementById("barChart").getContext("2d");
+if(barChart) barChart.destroy();
+
+barChart=new Chart(ctx,{
+type:"bar",
+data:{labels:years,datasets:[{label:"Year Avg",data:values}]}
+});
+
+setTimeout(()=>{
+let img2=document.getElementById("barChart").toDataURL();
+doc.addPage();
+doc.text("Year-wise Avg Mileage",10,10);
+doc.addImage(img2,'PNG',10,20,180,80);
 doc.save("Fuel_Report_"+currentYear+".pdf");
+},400);
 }
 
 // ---------- EVENTS ----------
