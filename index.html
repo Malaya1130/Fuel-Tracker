@@ -7,276 +7,301 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 body { font-family: Arial; margin:10px; background:#f4f6f9; font-size:13px; }
-.header { display:flex; justify-content:space-between; align-items:center; }
-.avg-box { background:#007bff; color:white; padding:5px 10px; border-radius:5px; }
-select { padding:5px; }
+.header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:5px; }
+
+.avg-box { padding:5px 10px; border-radius:5px; color:white; }
+.current { background:#007bff; }
+.previous { background:#6c757d; }
 
 table { width:100%; border-collapse:collapse; background:white; }
 th,td { border:1px solid #ddd; padding:5px; text-align:center; }
 th { background:#007bff; color:white; }
 
-button { margin:5px; padding:5px; border:none; color:white; border-radius:3px; }
+button { margin:5px; padding:6px; border:none; color:white; border-radius:4px; cursor:pointer;}
 .add{background:#28a745;} .calc{background:#007bff;}
 .export{background:#17a2b8;} .import{background:#fd7e14;}
 .report{background:#6f42c1;} .savebtn{background:#20c997;}
-
-.gold { background:#ffd700; }
-.silver { background:#c0c0c0; }
-.bronze { background:#cd7f32; }
 </style>
 </head>
 <body>
 
 <div class="header">
 <h3>Fuel Tracker</h3>
+
+<select id="yearSelect"></select>
+
 <div>
-<select id="yearSelect" onchange="changeYear()"></select>
-</div>
-<div id="avgMileage" class="avg-box">Avg. Milage: 0.00 km/L</div>
+Target: <input type="number" id="targetInput" value="18" step="0.1"> km/L
 </div>
 
-<table id="fuelTable">
+<div id="currentAvg" class="avg-box current">Current Avg: 0.00</div>
+<div id="prevAvg" class="avg-box previous">Prev Avg: 0.00</div>
+</div>
+
+<table>
 <thead>
 <tr>
-<th>S.No.</th><th>Date</th><th>OMR</th><th>Fuel</th><th>Amount</th><th>Dist</th><th>Milage</th><th>Action</th>
+<th>S.No.</th><th>Dates</th><th>OMR</th><th>Quant. (L)</th><th>Amount</th><th>Dist</th><th>Milage</th><th>Action</th>
 </tr>
 </thead>
-<tbody></tbody>
+<tbody id="tbody"></tbody>
 </table>
 
-<button class="add" onclick="addRow()">Add</button>
-<button class="calc" onclick="calculate()">Calc</button>
-<button class="savebtn" onclick="save()">Save</button>
-<button class="export" onclick="exportCSV()">Export</button>
-<button class="import" onclick="document.getElementById('fileInput').click()">Import Excel</button>
-<button class="report" onclick="generateReport()">Report</button>
+<button class="add" id="addBtn">Add</button>
+<button class="calc" id="calcBtn">Calc</button>
+<button class="savebtn" id="saveBtn">Save</button>
+<button class="export" id="exportBtn">Export</button>
+<button class="import" id="importBtn">Import Excel</button>
+<button class="report" id="reportBtn">PDF Report</button>
 
 <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
 
-<h3 id="average"></h3>
-<canvas id="chart" height="100"></canvas>
-<div id="report"></div>
+<canvas id="chart"></canvas>
+<canvas id="barChart" style="display:none"></canvas>
 
 <script>
-let chart;
-let currentYear = "2025-2026";
+const { jsPDF } = window.jspdf;
 
-function getKey(){ return "fuel_"+currentYear; }
+let chart, barChart;
+let currentYear="2025-2026";
+let targetMileage=18;
 
-function getPreviousYear(year){
-let y=year.split("-");
-return (parseInt(y[0])-1)+"-"+y[0];
-}
+const tbody=document.getElementById("tbody");
+const yearSelect=document.getElementById("yearSelect");
+const fileInput=document.getElementById("fileInput");
 
-function initYearDropdown(){
-let select=document.getElementById("yearSelect");
+// ---------- INIT ----------
+function initYear(){
 for(let y=2025;y<=2035;y++){
-let opt=document.createElement("option");
-opt.value=`${y}-${y+1}`;
-opt.text=`${y}-${y+1}`;
-if(opt.value===currentYear) opt.selected=true;
-select.appendChild(opt);
+let val=`${y}-${y+1}`;
+let opt=new Option(val,val);
+if(val===currentYear) opt.selected=true;
+yearSelect.add(opt);
 }
 }
 
-function changeYear(){
-currentYear=document.getElementById("yearSelect").value;
-document.querySelector("tbody").innerHTML="";
-load();
+// ---------- STORAGE ----------
+function getKey(){ return "fuel_"+currentYear; }
+function getTargetKey(){ return "target_"+currentYear; }
+
+function getPreviousYear(y){
+let p=y.split("-");
+return (parseInt(p[0])-1)+"-"+p[0];
 }
 
-function save(){
-let data=[];
-document.querySelectorAll("tbody tr").forEach(r=>{
-data.push({
-d:r.cells[1].children[0].value,
-o:r.cells[2].children[0].value,
-f:r.cells[3].children[0].value,
-a:r.cells[4].children[0].value
-});});
-localStorage.setItem(getKey(),JSON.stringify(data));
-alert("Data Saved Successfully");
-}
-
-function load(){
-let d=JSON.parse(localStorage.getItem(getKey())||"[]");
-
-// if empty, preload last entry from previous year
-if(d.length===0){
-let prevData=JSON.parse(localStorage.getItem("fuel_"+getPreviousYear(currentYear))||"[]");
-if(prevData.length>0){
-let last=prevData[prevData.length-1];
-addRow(last);
-return;
-}
-}
-
-d.forEach(x=>addRow(x));
-calculate();
-}
-
-function handleFile(e){
-const file=e.target.files[0];
-const reader=new FileReader();
-reader.onload=function(evt){
-const data=new Uint8Array(evt.target.result);
-const workbook=XLSX.read(data,{type:'array'});
-const sheet=workbook.Sheets[workbook.SheetNames[0]];
-const json=XLSX.utils.sheet_to_json(sheet);
-
-document.querySelector("tbody").innerHTML="";
-localStorage.removeItem(getKey());
-
-json.forEach(row=>{
-let excelDate=row["Dates"];
-let formattedDate="";
-if(typeof excelDate==="number"){
-let d=new Date((excelDate-25569)*86400*1000);
-formattedDate=d.toISOString().split("T")[0];
-}else{
-formattedDate=excelDate;
-}
-addRow({
-d:formattedDate,
-o:row["OMR"],
-f:row["Qunt. (L)"],
-a:row["Amount"]
-});
-});
-calculate();
-};
-reader.readAsArrayBuffer(file);
-}
-
-document.getElementById("fileInput").addEventListener("change",handleFile);
-
+// ---------- ROW ----------
 function addRow(x={}){
-let r=document.querySelector("tbody").insertRow();
+let r=tbody.insertRow();
 r.insertCell(0);
+
 ["d","o","f","a"].forEach((k,i)=>{
 let c=r.insertCell(i+1);
 let inp=document.createElement("input");
-inp.type=i==0?"date":"number";
+inp.type=i===0?"date":"number";
 inp.value=x[k]||"";
 inp.oninput=()=>{saveSilent();calculate();};
 c.appendChild(inp);
 });
+
 r.insertCell(5).innerText="-";
 r.insertCell(6).innerText="-";
+
 let act=r.insertCell(7);
 act.innerHTML="<button onclick='move(this,-1)'>↑</button><button onclick='move(this,1)'>↓</button><button onclick='del(this)'>X</button>";
-updateSN(); saveSilent();
+
+updateSN();
+saveSilent();
 }
 
+function updateSN(){
+[...tbody.rows].forEach((r,i)=>r.cells[0].innerText=i+1);
+}
+
+// ---------- SAVE ----------
 function saveSilent(){
 let data=[];
-document.querySelectorAll("tbody tr").forEach(r=>{
+[...tbody.rows].forEach(r=>{
 data.push({
 d:r.cells[1].children[0].value,
 o:r.cells[2].children[0].value,
 f:r.cells[3].children[0].value,
 a:r.cells[4].children[0].value
-});});
+});
+});
 localStorage.setItem(getKey(),JSON.stringify(data));
 }
 
-function move(btn,dir){
-let r=btn.parentNode.parentNode;
-let tb=r.parentNode;
-let i=[...tb.children].indexOf(r);
-if(dir==-1 && i>0) tb.insertBefore(r,tb.children[i-1]);
-if(dir==1 && i<tb.children.length-1) tb.insertBefore(tb.children[i+1],r);
-updateSN(); saveSilent(); calculate();
+function load(){
+tbody.innerHTML="";
+let d=JSON.parse(localStorage.getItem(getKey())||"[]");
+
+if(d.length===0){
+let prev=JSON.parse(localStorage.getItem("fuel_"+getPreviousYear(currentYear))||"[]");
+if(prev.length>0){ addRow(prev.at(-1)); return;}
 }
 
-function del(btn){btn.parentNode.parentNode.remove(); updateSN(); saveSilent(); calculate();}
-function updateSN(){document.querySelectorAll("tbody tr").forEach((r,i)=>r.cells[0].innerText=i+1);}
+d.forEach(addRow);
+calculate();
+calculatePrevAvg();
+}
 
+// ---------- IMPORT FIXED ----------
+document.getElementById("importBtn").onclick=()=>fileInput.click();
+
+fileInput.addEventListener("change",function(e){
+let file=e.target.files[0];
+if(!file) return;
+
+let reader=new FileReader();
+
+reader.onload=function(evt){
+let wb=XLSX.read(new Uint8Array(evt.target.result),{type:'array'});
+let sheet=wb.Sheets[wb.SheetNames[0]];
+let json=XLSX.utils.sheet_to_json(sheet);
+
+tbody.innerHTML="";
+localStorage.removeItem(getKey());
+
+json.forEach(row=>{
+let d=row["Dates"]||row["Date"];
+
+if(typeof d==="number"){
+d=new Date((d-25569)*86400*1000).toISOString().split("T")[0];
+}
+
+addRow({
+d:d,
+o:row["OMR"],
+f:row["Qunt. (L)"]||row["Quant. (L)"],
+a:row["Amount"]
+});
+});
+
+calculate();
+calculatePrevAvg();
+
+// 🔥 reset input (important fix)
+fileInput.value="";
+};
+
+reader.readAsArrayBuffer(file);
+});
+
+// ---------- CALCULATE ----------
 function calculate(){
-let prev=null,td=0,tf=0,ms=0,mc=0;
-let labels=[],data=[],rows=[];
+let prev=null,ms=0,mc=0;
+let labels=[],data=[];
 
-document.querySelectorAll("tbody tr").forEach(r=>{
+[...tbody.rows].forEach(r=>{
 let omr=parseFloat(r.cells[2].children[0].value);
 let fuel=parseFloat(r.cells[3].children[0].value);
-if(prev!=null && !isNaN(omr)){
+
+if(prev!=null && fuel>0){
 let dist=omr-prev;
 r.cells[5].innerText=dist;
-if(fuel>0){
+
 let mil=dist/fuel;
 r.cells[6].innerText=mil.toFixed(2);
-ms+=mil; mc++; td+=dist; tf+=fuel;
+
+ms+=mil; mc++;
 labels.push(r.cells[1].children[0].value);
 data.push(mil);
-rows.push({value:mil,row:r});
+}else{
+r.cells[5].innerText="-";
+r.cells[6].innerText="-";
 }
-}else{r.cells[5].innerText="-"; r.cells[6].innerText="-";}
 prev=omr;
 });
 
-if(tf>0) document.getElementById("average").innerText="Avg Total: "+(td/tf).toFixed(2)+" km/L";
-if(mc>0) document.getElementById("avgMileage").innerText="Avg. Milage: "+(ms/mc).toFixed(2)+" km/L";
-
-rows.sort((a,b)=>b.value-a.value);
-document.querySelectorAll("tbody tr").forEach(r=>r.cells[6].className="");
-if(rows[0]) rows[0].row.cells[6].classList.add("gold");
-if(rows[1]) rows[1].row.cells[6].classList.add("silver");
-if(rows[2]) rows[2].row.cells[6].classList.add("bronze");
+if(mc>0)
+document.getElementById("currentAvg").innerText="Current Avg: "+(ms/mc).toFixed(2);
 
 if(chart) chart.destroy();
 chart=new Chart(document.getElementById("chart"),{
 type:"line",
 data:{labels:labels,datasets:[
 {label:"Mileage",data:data},
-{label:"Target 18",data:labels.map(()=>18),borderDash:[5,5]}
+{label:"Target",data:labels.map(()=>targetMileage),borderDash:[5,5]}
 ]}
 });
 }
 
-function generateReport(){
-let monthly={}, yearly={};
-document.querySelectorAll("tbody tr").forEach(r=>{
-let date=r.cells[1].children[0].value;
-let mil=parseFloat(r.cells[6].innerText);
-if(date && !isNaN(mil)){
-let d=new Date(date);
-let m=d.getFullYear()+"-"+(d.getMonth()+1);
-let y=d.getFullYear();
-(monthly[m]=monthly[m]||[]).push(mil);
-(yearly[y]=yearly[y]||[]).push(mil);
+// ---------- PREVIOUS AVG ----------
+function getYearAvg(year){
+let data=JSON.parse(localStorage.getItem("fuel_"+year)||"[]");
+let prev=null,ms=0,mc=0;
+
+data.forEach(r=>{
+let omr=parseFloat(r.o);
+let fuel=parseFloat(r.f);
+if(prev!=null && fuel>0){
+ms+=(omr-prev)/fuel; mc++;
 }
+prev=omr;
 });
-let html="<h4>Monthly Avg</h4>";
-for(let k in monthly){
-let avg=(monthly[k].reduce((a,b)=>a+b)/monthly[k].length).toFixed(2);
-html+=k+": "+avg+" km/L<br>";
-}
-html+="<h4>Yearly Avg</h4>";
-for(let k in yearly){
-let avg=(yearly[k].reduce((a,b)=>a+b)/yearly[k].length).toFixed(2);
-html+=k+": "+avg+" km/L<br>";
-}
-document.getElementById("report").innerHTML=html;
+return mc?ms/mc:0;
 }
 
-function exportCSV(){
-let csv="S.No,Date,OMR,Fuel,Amount,Dist,Mileage\n";
-document.querySelectorAll("tbody tr").forEach((r,i)=>{
-csv+=`${i+1},${r.cells[1].children[0].value},${r.cells[2].children[0].value},${r.cells[3].children[0].value},${r.cells[4].children[0].value},${r.cells[5].innerText},${r.cells[6].innerText}\n`;
-});
-let blob=new Blob([csv]);
-let a=document.createElement("a");
-a.href=URL.createObjectURL(blob);
-a.download="fuel.csv";
-a.click();
+function calculatePrevAvg(){
+let avg=getYearAvg(getPreviousYear(currentYear));
+document.getElementById("prevAvg").innerText=
+avg? "Prev Avg: "+avg.toFixed(2):"Prev Avg: N/A";
 }
 
-initYearDropdown();
+// ---------- EVENTS ----------
+yearSelect.onchange=()=>{
+currentYear=yearSelect.value;
 load();
-if(document.querySelectorAll("tbody tr").length==0) addRow();
+};
+
+document.getElementById("addBtn").onclick=()=>addRow();
+document.getElementById("calcBtn").onclick=()=>calculate();
+document.getElementById("saveBtn").onclick=()=>alert("Saved!");
+document.getElementById("reportBtn").onclick=()=>generatePDF();
+
+// ---------- PDF ----------
+function generatePDF(){
+let doc=new jsPDF();
+
+doc.text("Fuel Report "+currentYear,10,10);
+doc.text(currentAvg.innerText,10,20);
+doc.text(prevAvg.innerText,10,28);
+
+let img=document.getElementById("chart").toDataURL();
+doc.addImage(img,'PNG',10,35,180,80);
+
+// bar chart
+let years=[],values=[];
+for(let y=2025;y<=2035;y++){
+let yr=`${y}-${y+1}`;
+let avg=getYearAvg(yr);
+if(avg){ years.push(yr); values.push(avg); }
+}
+
+let ctx=document.getElementById("barChart");
+if(barChart) barChart.destroy();
+
+barChart=new Chart(ctx,{
+type:"bar",
+data:{labels:years,datasets:[{label:"Year Avg",data:values}]}
+});
+
+setTimeout(()=>{
+let img2=ctx.toDataURL();
+doc.addPage();
+doc.text("Year-wise Avg Mileage",10,10);
+doc.addImage(img2,'PNG',10,20,180,80);
+doc.save("Fuel_Report_"+currentYear+".pdf");
+},300);
+}
+
+// ---------- START ----------
+initYear();
+load();
 </script>
 
 </body>
